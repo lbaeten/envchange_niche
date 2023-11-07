@@ -9,48 +9,121 @@ format: html
 
 library(tidyverse)
 set.seed(123)
+theme_set(theme_classic())
 ```
 
-Species environmental-response curves can be used as an approximation of the species' realized niches. They can be constructed from species occurrence data (e.g. GBIF) and gridded datasets of environmental data, assuming that the occurrences and corresponding environmental conditions are a random sample from the niche. 
+Species environmental-response curves can be used as an approximation of the species' realized niches. They can be constructed from species occurrence data (e.g. GBIF) and gridded datasets of environmental data, assuming that the occurrences and corresponding environmental conditions are a random sample (i.e. realization) from the niche.
 
 ## Define the species pool
 
 Here I construct niches for a species pool of $S$ species, some will be considered generalists with broad niches and some are specialists with narrow niches.
 
 ```{r}
-S <- 10
+S <- 100
 n_general <- round(S * 1/3)
 n_special <- S - n_general
 
+spp_pool <- 
+  tibble(species = 1:S,
+         type = rep(c("generalist", "specialist"), c(n_general, n_special)))
+
+spp_pool |>  count(type)
 ```
+
+## Set-up niche parameters
+
+The species response curves constructed below assume species niches to follow a normal distribution. So we need to set, for each species, a mean and SD from which we can derive the niche optimum (niche peak) and niche breadth, respectively.
+
+### Niche optima (mean)
+
+We can start from a uniformly distributed set of values between some minimum and maximum value to set the optima. Alternatively, we can assume that, for a given environmental variable, extreme values for the optima are less likely to occur. So we assume here that the optima are drawn from a normal distribution.
 
 ```{r}
 # Define the environmental gradient
-env_gradient <- seq(-5, 10, length.out = 10 * S)
+opt <- tibble(species_optima = rnorm(1000, mean = 5, sd = 2.5))
 
-# Generate a data frame of species with their niche means and standard deviations
-species <- tibble(
-  species_id = 1:S,
-  niche_mean = c(runif(n_general, quantile(env_gradient, .3), quantile(env_gradient, .7)),
-                 runif(n_special, min(env_gradient), max(env_gradient))),
-  niche_sd = c(runif(n_general, 2, 4), 
-               runif(n_special, 0.5, 1))
-)
+ggplot(opt, aes(species_optima)) + geom_density()
 ```
+Lets further also assume that generalist species have wide ranges, so they occur along a broad range of the environmental gradient. The consequence is that they are unlikely to have extreme values of the environmental variable as their optimum. Lets construct the distribution of optima for those generalists, by trim away the 5% tails.
 
 ```{r}
-# Use map2 to generate the niches for each species
-niches <- species |> 
-  mutate(value = map2(niche_mean, niche_sd, ~rnorm(10000, mean = .x, sd = .y))) |> 
-  unnest()
-```
+opt_gener <- opt |> 
+  filter(
+    species_optima > quantile(species_optima, .05) & 
+    species_optima < quantile(species_optima, .95) )
 
-
-```{r}
-# Plot the niches
-ggplot(niches, aes(value, group = as.factor(species_id), col = niche_mean)) +
+ggplot(opt, aes(species_optima)) + 
   geom_density() +
-  scale_colour_gradient(low = "lightblue", high = "darkred") +
-  theme_classic()
+  geom_density(data = opt_gener, aes(species_optima), fill = "darkgreen", alpha = .5)
+```
+### niche breadth (SD)
+
+Generalists have broad niches and specialists have more narrow niches. Let construct possible SD-values for distributions of the two types of species.
+
+```{r}
+breadth <- runif(1000, .5, 1.5)
+breadth_gener <- runif(1000, 1.5, 3)
+```
+
+### set parameters per species
+
+Now sample for each species in the species pool one mean and one SD value.
+
+```{r}
+spp_params <- 
+  spp_pool |> 
+  mutate(
+    niche_mean = map_dbl(type, ~ifelse(.x == "generalist", 
+                                       sample(opt_gener$species_optima, 1), 
+                                       sample(opt$species_optima, 1))
+                         ),
+    niche_breadth = map_dbl(type, ~ifelse(.x == "generalist",
+                                          sample(breadth_gener, 1),
+                                          sample(breadth, 1))
+                            )
+  )
+
+head(spp_params)
+```
+
+## Construct environmental response curve
+
+Now we can use the species-level parameters to sample from their niches, which are formed by a normal distribiton. These samples are then corresponding to the environmental response curves.
+
+```{r}
+niches <- spp_params |> 
+  mutate(value = map2(niche_mean, 
+                      niche_breadth, 
+                      ~rnorm(10000, mean = .x, sd = .y)
+                      )
+         ) |> 
+  unnest()
+
+head(niches)
+```
+
+## Display curves
+
+Niches of all species in the species pool
+
+```{r}
+ggplot(niches, aes(value, group = as.factor(species), col = niche_mean)) +
+  geom_density(aes(linetype = type)) +
+  scale_colour_gradient2(low = "lightblue", mid = "lightgrey", high = "darkred", midpoint = 5)
+```
+
+Niches of the species occuring in a single plot.
+
+```{r}
+#| message: false
+
+spp_plot1 <- 
+  spp_pool |> 
+  sample_n(10) |> 
+  left_join(niches)
+
+ggplot(spp_plot1, aes(value, group = as.factor(species), col = niche_mean)) +
+  geom_density(aes(linetype = type)) +
+  scale_colour_gradient2(low = "lightblue", mid = "lightgrey", high = "darkred", midpoint = 5)
 ```
 
