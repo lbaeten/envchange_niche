@@ -1,0 +1,56 @@
+---
+title: "Construct species environmental-response curves"
+format: html
+---
+
+```{r}
+#| echo: false
+#| message: false
+
+library(tidyverse)
+set.seed(123)
+```
+
+Species environmental-response curves can be used as an approximation of the species' realized niches. They can be constructed from species occurrence data (e.g. GBIF) and gridded datasets of environmental data, assuming that the occurrences and corresponding environmental conditions are a random sample from the niche. 
+
+## Define the species pool
+
+Here I construct niches for a species pool of $S$ species, some will be considered generalists with broad niches and some are specialists with narrow niches.
+
+```{r}
+S <- 10
+n_general <- round(S * 1/3)
+n_special <- S - n_general
+
+```
+
+```{r}
+# Define the environmental gradient
+env_gradient <- seq(-5, 10, length.out = 10 * S)
+
+# Generate a data frame of species with their niche means and standard deviations
+species <- tibble(
+  species_id = 1:S,
+  niche_mean = c(runif(n_general, quantile(env_gradient, .3), quantile(env_gradient, .7)),
+                 runif(n_special, min(env_gradient), max(env_gradient))),
+  niche_sd = c(runif(n_general, 2, 4), 
+               runif(n_special, 0.5, 1))
+)
+```
+
+```{r}
+# Use map2 to generate the niches for each species
+niches <- species |> 
+  mutate(value = map2(niche_mean, niche_sd, ~rnorm(10000, mean = .x, sd = .y))) |> 
+  unnest()
+```
+
+
+```{r}
+# Plot the niches
+ggplot(niches, aes(value, group = as.factor(species_id), col = niche_mean)) +
+  geom_density() +
+  scale_colour_gradient(low = "lightblue", high = "darkred") +
+  theme_classic()
+```
+
